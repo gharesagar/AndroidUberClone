@@ -1,6 +1,7 @@
 package com.example.sagar.androiduberclone;
 
 import android.Manifest;
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 
@@ -10,6 +11,7 @@ import com.firebase.geofire.GeoLocation;
 import com.google.android.gms.common.GooglePlayServicesUtil;
 import com.google.android.gms.location.LocationListener;
 
+import android.graphics.Color;
 import android.location.Location;
 import android.os.Handler;
 import android.os.SystemClock;
@@ -33,21 +35,26 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.CameraUpdate;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
+import com.google.android.gms.maps.model.JointType;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
+import com.google.android.gms.maps.model.SquareCap;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -90,15 +97,15 @@ public class Welcome extends FragmentActivity implements OnMapReadyCallback,
     private List<LatLng> polyLineList;
     private Marker pickupLocationMarker;
     private float v;
-    private double lat,lng;
+    private double lat, lng;
     private Handler handler;
-    private LatLng startPosition,endPosition,currentPosition;
-    private int index,next;
+    private LatLng startPosition, endPosition, currentPosition;
+    private int index, next;
     private Button btnGo;
     private EditText edtPlace;
     private String destination;
-    private PolylineOptions polylineOptions,blackPolylineOptions;
-    private Polyline blackPolyline,greyPolyline;
+    private PolylineOptions polylineOptions, blackPolylineOptions;
+    private Polyline blackPolyline, greyPolyline;
 
     private IGoogleApi mService;
 
@@ -127,15 +134,15 @@ public class Welcome extends FragmentActivity implements OnMapReadyCallback,
             }
         });
 
-        polyLineList=new ArrayList<>();
-        btnGo=findViewById(R.id.btnGo);
-        edtPlace=findViewById(R.id.edtPlace);
+        polyLineList = new ArrayList<>();
+        btnGo = findViewById(R.id.btnGo);
+        edtPlace = findViewById(R.id.edtPlace);
 
         btnGo.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                destination=edtPlace.getText().toString();
-                destination=destination.replace(" ","+");
+                destination = edtPlace.getText().toString();
+                destination = destination.replace(" ", "+");
 
 
                 getDirection();
@@ -148,17 +155,17 @@ public class Welcome extends FragmentActivity implements OnMapReadyCallback,
 
         setUpLocation();
 
-        mService= Common.getGoogleApi();
+        mService = Common.getGoogleApi();
     }
 
     private void getDirection() {
 
-        currentPosition=new LatLng(mLastLocation.getLatitude(),mLastLocation.getLongitude());
+        currentPosition = new LatLng(mLastLocation.getLatitude(), mLastLocation.getLongitude());
 
-        String requestApi=null;
+        String requestApi = null;
 
         try {
-            requestApi= "https://maps.googleapis.com/maps/api/directions/json?" +
+            requestApi = "https://maps.googleapis.com/maps/api/directions/json?" +
                     "mode=driving&"
                     + "transit_routing_preference=less_driving&"
                     + "origin=" + currentPosition.latitude + "," + currentPosition.longitude + "&"
@@ -168,29 +175,101 @@ public class Welcome extends FragmentActivity implements OnMapReadyCallback,
 
             Log.d("requestApi", requestApi);
             mService.getPath(requestApi)
-                     .enqueue(new Callback<String>() {
-                         @Override
-                         public void onResponse(Call<String> call, Response<String> response) {
+                    .enqueue(new Callback<String>() {
+                        @Override
+                        public void onResponse(Call<String> call, Response<String> response) {
 
-                             try {
-                                 JSONObject jsonObject=new JSONObject(response.body().toString());
+                            try {
+                                JSONObject jsonObject = new JSONObject(response.body().toString());
+                                JSONArray jsonArray = jsonObject.getJSONArray("routes");
 
-                             } catch (JSONException e) {
-                                 e.printStackTrace();
-                             }
-                         }
+                                for (int i = 0; i < jsonArray.length(); i++) {
+                                    JSONObject route = jsonArray.getJSONObject(i);
+                                    JSONObject poly = route.getJSONObject("overview_polyline");
+                                    String polyline = poly.getString("points");
 
-                         @Override
-                         public void onFailure(Call<String> call, Throwable t) {
+                                    polyLineList = decodePoly(polyline);
+                                }
 
-                             Toast.makeText(getApplicationContext(),""+t.getMessage(),Toast.LENGTH_SHORT).show();
-                         }
-                     });
+                                //adjusting bounds
+                                LatLngBounds.Builder builder = new LatLngBounds.Builder();
+                                for (LatLng latLng : polyLineList)
+                                    builder.include(latLng);
+                                LatLngBounds bounds = builder.build();
+                                CameraUpdate cameraUpdate = CameraUpdateFactory.newLatLngBounds(bounds, 2);
+                                mMap.animateCamera(cameraUpdate);
+
+                                polylineOptions = new PolylineOptions();
+                                polylineOptions.color(Color.GRAY);
+                                polylineOptions.width(5);
+                                polylineOptions.startCap(new SquareCap());
+                                polylineOptions.endCap(new SquareCap());
+                                polylineOptions.jointType(JointType.ROUND);
+                                polylineOptions.addAll(polyLineList);
+                                greyPolyline = mMap.addPolyline(polylineOptions);
+
+                                blackPolylineOptions = new PolylineOptions();
+                                blackPolylineOptions.color(Color.BLACK);
+                                blackPolylineOptions.width(5);
+                                blackPolylineOptions.startCap(new SquareCap());
+                                blackPolylineOptions.endCap(new SquareCap());
+                                blackPolylineOptions.jointType(JointType.ROUND);
+                                blackPolyline = mMap.addPolyline(blackPolylineOptions);
+
+                                mMap.addMarker(new MarkerOptions()
+                                        .position(polyLineList.get(polyLineList.size() - 1))
+                                          .title("Pickup Location"));
+
+                                //animation
+                               // ValueAnimator polyLineAnimator=
+
+                            } catch (JSONException e) {
+                                e.printStackTrace();
+                            }
+                        }
+
+                        @Override
+                        public void onFailure(Call<String> call, Throwable t) {
+
+                            Toast.makeText(getApplicationContext(), "" + t.getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    });
 
 
-        }catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    private List decodePoly(String encoded) {
+
+        List poly = new ArrayList();
+        int index = 0, len = encoded.length();
+        int lat = 0, lng = 0;
+
+        while (index < len) {
+            int b, shift = 0, result = 0;
+            do {
+                b = encoded.charAt(index++) - 63;
+                result |= (b & 0x1f) << shift;
+                shift += 5;
+            } while (b >= 0x20);
+            int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+            lat += dlat;
+
+            shift = 0;
+            result = 0;
+            do {
+                b = encoded.charAt(index++) - 63;
+                result |= (b & 0x1f) << shift;
+                shift += 5;
+            } while (b >= 0x20);
+            int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+            lng += dlng;
+            poly.add(new LatLng((double) lat / 1E5, (double) lng / 1E5));
+        }
+
+        return poly;
     }
 
     @Override
@@ -365,7 +444,6 @@ public class Welcome extends FragmentActivity implements OnMapReadyCallback,
     }
 
 
-
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
@@ -392,7 +470,7 @@ public class Welcome extends FragmentActivity implements OnMapReadyCallback,
 
     @Override
     public void onConnectionSuspended(int i) {
-     //   Called when the client is temporarily in a disconnected state.
+        //   Called when the client is temporarily in a disconnected state.
         mGoogleApiClient.connect();
     }
 
